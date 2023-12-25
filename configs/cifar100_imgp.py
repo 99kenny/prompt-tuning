@@ -77,8 +77,8 @@ def get_args_parser(subparsers):
     # Prompt parameters
     subparsers.add_argument('--prompt_pool', default=True, type=bool,)
     subparsers.add_argument('--size', default=10, type=int,)
-    subparsers.add_argument('--length', default=5,type=int, )
-    subparsers.add_argument('--top_k', default=5, type=int, )
+    subparsers.add_argument('--length', default=0,type=int, )
+    subparsers.add_argument('--top_k', default=1, type=int, )
     subparsers.add_argument('--embed_dim', default=768, type=int, )
     subparsers.add_argument('--initializer', default='uniform', type=str,)
     subparsers.add_argument('--prompt_key', default=True, type=bool,)
@@ -94,14 +94,14 @@ def get_args_parser(subparsers):
 
     # ViT parameters
     subparsers.add_argument('--global_pool', default='token', choices=['token', 'avg'], type=str, help='type of global pooling for final sequence')
-    subparsers.add_argument('--head_type', default='prompt', choices=['token', 'gap', 'prompt', 'token+prompt'], type=str, help='input type of classification head')
+    subparsers.add_argument('--head_type', default='token', choices=['token', 'gap', 'prompt', 'token+prompt'], type=str, help='input type of classification head')
     subparsers.add_argument('--freeze', default=['blocks', 'patch_embed', 'cls_token', 'norm', 'pos_embed'], nargs='*', type=list, help='freeze part in backbone model')
 
     # Misc parameters
     subparsers.add_argument('--print_freq', type=int, default=10, help = 'The frequency of printing')
 
-    subparsers.add_argument('--exp', type=str, default='l2p', help = 'experiment name')
-    subparsers.add_argument('--note', type=str, default='no_batchwise', help = 'note for exp')
-    subparsers.add_argument('--type', type=str, default='l2p', help = 'prompt_type')
+    subparsers.add_argument('--exp', type=str, default='imgp', help = 'experiment name')
+    subparsers.add_argument('--note', type=str, default='', help = 'note for exp')
+    subparsers.add_argument('--type', type=str, default='imgp', help = 'prompt_type')
     
     

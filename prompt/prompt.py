@@ -15,7 +15,7 @@ class Prompt(nn.Module):
         self.pool_size = pool_size
         self.top_k = top_k
         self.batchwise_prompt = batchwise_prompt
-
+        self.frequency = torch.ones(pool_size)
         if self.prompt_pool:
             prompt_pool_shape = (pool_size, length, embed_dim)
             if prompt_init == 'zero':
@@ -66,6 +66,12 @@ class Prompt(nn.Module):
 
             similarity = torch.matmul(x_embed_norm, prompt_norm.t()) # B, Pool_size
             
+            handicap = (1 / self.frequency)
+            freq_min = handicap.min()
+            freq_max = handicap.max()
+            handicap = (handicap - freq_min) / (freq_max - freq_min) + 1 
+            similarity = similarity * handicap
+            
             if prompt_mask is None:
                 _, idx = torch.topk(similarity, k=self.top_k, dim=1) # B, top_k
                 if self.batchwise_prompt:
@@ -82,7 +88,11 @@ class Prompt(nn.Module):
                     idx = major_prompt_id.expand(x_embed.shape[0], -1) # B, top_k
             else:
                 idx = prompt_mask # B, top_k
-
+            
+            for index in idx:
+                self.frequency[index] = self.frequency[index] + 1
+            
+            
             batched_prompt_raw = self.prompt[idx] # B, top_k, length, C
             batch_size, top_k, length, c = batched_prompt_raw.shape
             batched_prompt = batched_prompt_raw.reshape(batch_size, top_k * length, c) # B, top_k * length, C

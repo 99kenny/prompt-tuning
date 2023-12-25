@@ -40,8 +40,10 @@ from timm.models.helpers import build_model_with_cfg, resolve_pretrained_cfg, na
 from timm.models.layers import PatchEmbed, Mlp, DropPath, trunc_normal_, lecun_normal_
 from timm.models.registry import register_model
 
-from prompt import Prompt
-
+from prompt.prompt import Prompt
+from prompt.generator_prompt import GeneratorPrompt
+from prompt.patch_embed_prompt import PatchEmbedPrompt
+from prompt.patch_embed_prompt_single import PatchEmbedPromptSingle
 _logger = logging.getLogger(__name__)
 
 
@@ -335,7 +337,8 @@ class VisionTransformer(nn.Module):
             class_token=True, no_embed_class=False, fc_norm=None, drop_rate=0., attn_drop_rate=0., drop_path_rate=0.,
             weight_init='', embed_layer=PatchEmbed, norm_layer=None, act_layer=None, block_fn=Block,
             prompt_length=None, embedding_key='cls', prompt_init='uniform', prompt_pool=False, prompt_key=False, pool_size=None,
-            top_k=None, batchwise_prompt=False, prompt_key_init='uniform', head_type='token', use_prompt_mask=False,):
+            top_k=None, batchwise_prompt=False, prompt_key_init='uniform', head_type='token', use_prompt_mask=False, 
+            prompt=None):
         """
         Args:
             img_size (int, tuple): input image size
@@ -376,7 +379,7 @@ class VisionTransformer(nn.Module):
         self.num_prefix_tokens = 1 if class_token else 0
         self.no_embed_class = no_embed_class
         self.grad_checkpointing = False
-
+        self.length = prompt_length
         self.patch_embed = embed_layer(
             img_size=img_size, patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dim)
         num_patches = self.patch_embed.num_patches
@@ -385,6 +388,10 @@ class VisionTransformer(nn.Module):
         embed_len = num_patches if no_embed_class else num_patches + self.num_prefix_tokens
         if prompt_length is not None and pool_size is not None and prompt_pool:
             embed_len += prompt_length * top_k
+        ##### for generator_prompt
+        if isinstance(prompt, GeneratorPrompt) :
+            embed_len += 1
+        ############################
         self.pos_embed = nn.Parameter(torch.randn(1, embed_len, embed_dim) * .02)
         self.pos_drop = nn.Dropout(p=drop_rate)
 
@@ -393,10 +400,12 @@ class VisionTransformer(nn.Module):
         self.use_prompt_mask = use_prompt_mask
         
         if prompt_length is not None and pool_size is not None and prompt_pool: 
-            self.prompt = Prompt(length=prompt_length, embed_dim=embed_dim, embedding_key=embedding_key, prompt_init=prompt_init,
+            if prompt is None:
+                self.prompt = Prompt(length=prompt_length, embed_dim=embed_dim, embedding_key=embedding_key, prompt_init=prompt_init,
                     prompt_pool=prompt_pool, prompt_key=prompt_key, pool_size=pool_size, top_k=top_k, batchwise_prompt=batchwise_prompt,
                     prompt_key_init=prompt_key_init,)
-
+            else: 
+                self.prompt = prompt
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
         self.blocks = nn.Sequential(*[
             block_fn(
@@ -455,26 +464,44 @@ class VisionTransformer(nn.Module):
         self.head = nn.Linear(self.embed_dim, num_classes) if num_classes > 0 else nn.Identity()
 
     def forward_features(self, x, task_id=-1, cls_features=None, train=False):
-        x = self.patch_embed(x)
-
-        if hasattr(self, 'prompt'):
-            if self.use_prompt_mask and train:
-                start = task_id * self.prompt.top_k
-                end = (task_id + 1) * self.prompt.top_k
-                single_prompt_mask = torch.arange(start, end).to(x.device)
-                prompt_mask = single_prompt_mask.unsqueeze(0).expand(x.shape[0], -1)
-                if end > self.prompt.pool_size:
-                    prompt_mask = None
+        ##################
+        if False: 
+            if hasattr(self, 'prompt'):
+                res = self.prompt(train, x, prompt_mask=None, cls_features=cls_features) 
+                self.total_prompt_len = res['total_prompt_len']
+                x = res['prompted_embedding']
+                x = self.patch_embed(x)
             else:
-                prompt_mask = None
-            res = self.prompt(x, prompt_mask=prompt_mask, cls_features=cls_features)
-            self.total_prompt_len = res['total_prompt_len']
-            x = res['prompted_embedding']
-        else:
-            res=dict()
-        if self.cls_token is not None:
-            x = torch.cat((self.cls_token.expand(x.shape[0], -1, -1), x), dim=1)
+                x = self.patch_embed(x)
+                res=dict()
+            if self.cls_token is not None:
+                x = torch.cat((self.cls_token.expand(x.shape[0], -1, -1), x), dim=1)
+        ####################
         
+        else:
+            x = self.patch_embed(x)
+            if hasattr(self, 'prompt'):
+                if self.use_prompt_mask and train:
+                    start = task_id * self.prompt.top_k
+                    end = (task_id + 1) * self.prompt.top_k
+                    single_prompt_mask = torch.arange(start, end).to(x.device)
+                    prompt_mask = single_prompt_mask.unsqueeze(0).expand(x.shape[0], -1)
+                    if end > self.prompt.pool_size:
+                        prompt_mask = None
+                else:
+                    prompt_mask = None    
+                if isinstance(self.prompt,PatchEmbedPrompt) or isinstance(self.prompt, PatchEmbedPromptSingle):        
+                    res = self.prompt(train, x, prompt_mask=prompt_mask, cls_features=cls_features, patch_embed = self.patch_embed)
+                else:
+                    res = self.prompt(train, x, prompt_mask=prompt_mask, cls_features=cls_features)
+                self.total_prompt_len = res['total_prompt_len']
+                x = res['prompted_embedding']
+            else:
+                res=dict()
+                
+            if self.cls_token is not None:
+                x = torch.cat((self.cls_token.expand(x.shape[0], -1, -1), x), dim=1)
+
         x = self.pos_drop(x + self.pos_embed)
 
         if self.grad_checkpointing and not torch.jit.is_scripting():
@@ -489,6 +516,9 @@ class VisionTransformer(nn.Module):
 
     def forward_head(self, res, pre_logits: bool = False):
         x = res['x']
+        
+        # cls 196 = 217
+        res['prompt_logits'] = x[:,0:4]
         if self.class_token and self.head_type == 'token':
             x = x[:, 0]
         elif self.head_type == 'gap' and self.global_pool == 'avg':

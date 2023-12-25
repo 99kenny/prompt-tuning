@@ -17,10 +17,12 @@ import time
 import math
 from collections import defaultdict, deque
 import datetime
+import random
 
 import torch
 import torch.distributed as dist
-
+from torchvision import transforms
+from tqdm import tqdm
 class SmoothedValue(object):
     """Track a series of values and provide access to smoothed values over a
     window or the global series average.
@@ -242,3 +244,90 @@ def init_distributed_mode(args):
                                          world_size=args.world_size, rank=args.rank)
     torch.distributed.barrier()
     setup_for_distributed(args.rank == 0)
+   
+def initialize_prompt_from_training_img(dataset, pool_size, length, args):
+    from datasets import build_transform, get_dataset
+    # build transform
+    transform = transforms.Compose([
+            transforms.ToTensor(),
+    ]) 
+    dataset, _ = get_dataset(dataset, transform, transform, args)
+    
+    # cls prompt - pool_size * length 만큼 필요 [pool_size, length, embed_dim]
+    # selected_idx = [0,6,11,13,20,26,43,47,49,62]
+    # idx = [2,3,32,42,55,57,63,141,150,240]
+    idx = [29,4,6,9,3,27,0,7,8,1]
+    prompt_pool = []
+    for i in idx:
+        prompt_pool.append(dataset.__getitem__(i)[0].unsqueeze(0))
+    # for idx,i in enumerate(dataset):
+    #     if i[1] in selected_idx:
+    #         print(idx)
+    #         selected_idx.remove(i[1])
+    #         prompt_pool.append(i[0].unsqueeze(0))
+    prompts = torch.cat(prompt_pool, dim=0)
+    
+    return prompts
+ 
+def initialize_prompt_from_training_img_cls(dataset, pool_size, length, original_model, args):
+    from datasets import build_transform, get_dataset
+    # build transform
+    transform = build_transform(False, args)   
+    dataset, _ = get_dataset(dataset, transform, transform, args)
+
+    # cls prompt - pool_size * length 만큼 필요 [pool_size, length, embed_dim]
+    selected_idx = random.sample(range(0,len(dataset)), pool_size*length)
+    prompts = []
+    print('start loading images for prompt initialization')
+    for i in tqdm(selected_idx):
+        prompts.append(original_model(dataset.__getitem__(i)[0].unsqueeze(0))['pre_logits'])
+    prompts = torch.cat(prompts, dim=0)
+    prompts = prompts.reshape(pool_size, length, -1)
+    print("prompts shape : ",prompts.shape)
+    return prompts
+    
+# def initialize_prompt_from_training_img(dataset, pool_size, length, args):
+#     from datasets import build_transform, get_dataset
+#     # build transform
+#     transform = transforms.Compose([
+#             transforms.ToTensor(),
+#         ])
+#     print(dataset)
+#     dataset, _ = get_dataset(dataset, transform, transform, args)
+    
+#     # cls prompt - pool_size * length 만큼 필요 [pool_size, length, embed_dim]
+#     selected_idx = random.sample(range(0,len(dataset)), pool_size)
+#     prompts = []
+#     print('start loading images for prompt initialization')
+#     c,h,w = dataset.__getitem__(0)[0].shape
+#     for i in tqdm(selected_idx):
+#         prompts.append(dataset.__getitem__(i)[0].unsqueeze(0))
+#         print(dataset.__getitem__(i)[1])
+#     prompts = torch.cat(prompts, dim=0)
+#     prompts = prompts.reshape(pool_size,c,h,w)
+#     print("prompts shape : ", prompts.shape)
+#     return prompts
+
+def l2_normalize(x, dim=None, epsilon=1e-12):
+        """Normalizes a given vector or matrix."""
+        square_sum = torch.sum(x ** 2, dim=dim, keepdim=True)
+        x_inv_norm = torch.rsqrt(torch.maximum(square_sum, torch.tensor(epsilon, device=x.device)))
+        return x * x_inv_norm   
+
+def compute_similarity(prompt_embed, x_embed, frequency, diversify):
+    prompt_norm = l2_normalize(prompt_embed, dim=1)
+    x_embed_norm = l2_normalize(x_embed, dim=1)
+    
+    similarity = torch.matmul(x_embed_norm, prompt_norm.t())
+    
+    if diversify:
+        handicap = (1 / frequency)
+        freq_min = handicap.min()
+        freq_max = handicap.max()
+        handicap = (handicap - freq_min) / (freq_max - freq_min) + 1 
+        similarity = similarity * handicap.to(similarity.device)
+    
+    return similarity, prompt_norm, x_embed_norm
+
+def ortho_penalty(t):
+    return ((t @t.T - torch.eye(t.shape[0]).cuda())**2).mean()

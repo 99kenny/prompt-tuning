@@ -86,7 +86,7 @@ def get_args_parser(subparsers):
     subparsers.add_argument('--use_prompt_mask', default=False, type=bool)
     subparsers.add_argument('--shared_prompt_pool', default=False, type=bool)
     subparsers.add_argument('--shared_prompt_key', default=False, type=bool)
-    subparsers.add_argument('--batchwise_prompt', default=False, type=bool)
+    subparsers.add_argument('--batchwise_prompt', default=True, type=bool)
     subparsers.add_argument('--embedding_key', default='cls', type=str)
     subparsers.add_argument('--predefined_key', default='', type=str)
     subparsers.add_argument('--pull_constraint', default=True)
@@ -94,14 +94,14 @@ def get_args_parser(subparsers):
 
     # ViT parameters
     subparsers.add_argument('--global_pool', default='token', choices=['token', 'avg'], type=str, help='type of global pooling for final sequence')
-    subparsers.add_argument('--head_type', default='prompt', choices=['token', 'gap', 'prompt', 'token+prompt'], type=str, help='input type of classification head')
+    subparsers.add_argument('--head_type', default='token', choices=['token', 'gap', 'prompt', 'token+prompt'], type=str, help='input type of classification head')
     subparsers.add_argument('--freeze', default=['blocks', 'patch_embed', 'cls_token', 'norm', 'pos_embed'], nargs='*', type=list, help='freeze part in backbone model')
 
     # Misc parameters
     subparsers.add_argument('--print_freq', type=int, default=10, help = 'The frequency of printing')
 
-    subparsers.add_argument('--exp', type=str, default='l2p', help = 'experiment name')
-    subparsers.add_argument('--note', type=str, default='no_batchwise', help = 'note for exp')
-    subparsers.add_argument('--type', type=str, default='l2p', help = 'prompt_type')
+    subparsers.add_argument('--exp', type=str, default='lwip', help = 'experiment name')
+    subparsers.add_argument('--note', type=str, default='', help = 'note for exp')
+    subparsers.add_argument('--type', type=str, default='lwip', help = 'prompt_type')
     
     
